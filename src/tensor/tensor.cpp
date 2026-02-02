@@ -163,11 +163,12 @@ void Tensor::debug() const {
     }
 }
 
+// src/tensor/tensor.cpp
+
 bool Tensor::isContiguous() const {
     size_t expected_stride = 1;
-    // 从最后一个维度向前遍历
-    for (int i = _meta.shape.size() - 1; i >= 0; --i) {
-        // 维度为1不影响连续性判断，但步长可能不规范，直接跳过
+    // 修改点：将 int 改为 int64_t，并加上 static_cast<int64_t>
+    for (int64_t i = static_cast<int64_t>(_meta.shape.size()) - 1; i >= 0; --i) {
         if (_meta.shape[i] == 1) {
             continue;
         }
@@ -206,10 +207,15 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
         throw std::runtime_error("Tensor::view: Output size must match input size.");
     }
 
-    // 简单实现：如果原张量连续，则按照新形状生成标准的连续步长
-    // 如果不连续，复杂的 view 操作很难不拷贝数据完成，这里主要处理连续情况
-    if (!isContiguous()) {
-        throw std::runtime_error("Tensor::view: Non-contiguous input is not fully supported for this assignment.");
+    if (isContiguous()) {
+        std::vector<ptrdiff_t> new_strides(shape.size());
+        size_t stride = 1;
+        // 修改点：将 int 改为 int64_t，并加上 static_cast<int64_t>
+        for (int64_t i = static_cast<int64_t>(shape.size()) - 1; i >= 0; --i) {
+            new_strides[i] = stride;
+            stride *= shape[i];
+        }
+        return std::shared_ptr<Tensor>(new Tensor(TensorMeta{_meta.dtype, shape, new_strides}, _storage, _offset));
     }
 
     std::vector<ptrdiff_t> new_strides(shape.size());
