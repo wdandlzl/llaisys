@@ -207,28 +207,24 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
         throw std::runtime_error("Tensor::view: Output size must match input size.");
     }
 
-    if (isContiguous()) {
-        std::vector<ptrdiff_t> new_strides(shape.size());
-        size_t stride = 1;
-        // 修改点：将 int 改为 int64_t，并加上 static_cast<int64_t>
-        for (int64_t i = static_cast<int64_t>(shape.size()) - 1; i >= 0; --i) {
-            new_strides[i] = stride;
-            stride *= shape[i];
-        }
-        return std::shared_ptr<Tensor>(new Tensor(TensorMeta{_meta.dtype, shape, new_strides}, _storage, _offset));
+    // 检查：view 操作通常要求内存是连续的，或者步长满足特定条件。
+    // 为了简化作业并确保正确性，建议只允许连续张量进行 view。
+    if (!isContiguous()) {
+        throw std::runtime_error("Tensor::view: Input tensor must be contiguous to use view(). Please call contiguous() first.");
     }
 
+    // 计算新的连续步长
     std::vector<ptrdiff_t> new_strides(shape.size());
     size_t stride = 1;
-    for (int i = shape.size() - 1; i >= 0; --i) {
+
+    // --- 修复点：确保循环变量是 int64_t 以避免 Windows 编译错误 ---
+    for (int64_t i = static_cast<int64_t>(shape.size()) - 1; i >= 0; --i) {
         new_strides[i] = stride;
         stride *= shape[i];
     }
-
-    // 创建新元数据
-    TensorMeta new_meta{_meta.dtype, shape, new_strides};
+    
     // 返回共享存储的新张量
-    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
+    return std::shared_ptr<Tensor>(new Tensor(TensorMeta{_meta.dtype, shape, new_strides}, _storage, _offset));
 }
 
 tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
