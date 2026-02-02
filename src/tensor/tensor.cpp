@@ -200,6 +200,7 @@ tensor_t Tensor::permute(const std::vector<size_t> &order) const {
 }
 
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
+    // 1. 检查元素总数是否一致
     size_t new_numel = 1;
     for (auto s : shape) new_numel *= s;
     
@@ -207,23 +208,25 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
         throw std::runtime_error("Tensor::view: Output size must match input size.");
     }
 
-    // 检查：view 操作通常要求内存是连续的，或者步长满足特定条件。
-    // 为了简化作业并确保正确性，建议只允许连续张量进行 view。
+    // 2. 检查连续性 (作业简化处理：非连续张量不允许直接 view)
     if (!isContiguous()) {
+        // 如果你需要支持非连续张量的 view，逻辑会非常复杂。
+        // 对于本次作业，建议直接报错提示用户先调用 contiguous()。
         throw std::runtime_error("Tensor::view: Input tensor must be contiguous to use view(). Please call contiguous() first.");
     }
 
-    // 计算新的连续步长
+    // 3. 计算新的连续步长
     std::vector<ptrdiff_t> new_strides(shape.size());
     size_t stride = 1;
 
-    // --- 修复点：确保循环变量是 int64_t 以避免 Windows 编译错误 ---
+    // --- 关键修复：使用 int64_t 替代 int，并强制转换 shape.size() ---
+    // 这行代码解决了 Windows 下的 C4267 错误
     for (int64_t i = static_cast<int64_t>(shape.size()) - 1; i >= 0; --i) {
         new_strides[i] = stride;
         stride *= shape[i];
     }
-    
-    // 返回共享存储的新张量
+
+    // 4. 返回共享存储的新张量
     return std::shared_ptr<Tensor>(new Tensor(TensorMeta{_meta.dtype, shape, new_strides}, _storage, _offset));
 }
 
