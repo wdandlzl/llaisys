@@ -164,27 +164,103 @@ void Tensor::debug() const {
 }
 
 bool Tensor::isContiguous() const {
-    TO_BE_IMPLEMENTED();
+    size_t expected_stride = 1;
+    // 从最后一个维度向前遍历
+    for (int i = _meta.shape.size() - 1; i >= 0; --i) {
+        // 维度为1不影响连续性判断，但步长可能不规范，直接跳过
+        if (_meta.shape[i] == 1) {
+            continue;
+        }
+        if (_meta.strides[i] != static_cast<ptrdiff_t>(expected_stride)) {
+            return false;
+        }
+        expected_stride *= _meta.shape[i];
+    }
     return true;
 }
 
 tensor_t Tensor::permute(const std::vector<size_t> &order) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    if (order.size() != _meta.shape.size()) {
+        throw std::runtime_error("Tensor::permute: Dimension mismatch.");
+    }
+
+    std::vector<size_t> new_shape;
+    std::vector<ptrdiff_t> new_strides;
+    new_shape.reserve(order.size());
+    new_strides.reserve(order.size());
+
+    for (size_t idx : order) {
+        new_shape.push_back(_meta.shape[idx]);
+        new_strides.push_back(_meta.strides[idx]);
+    }
+
+    TensorMeta new_meta{_meta.dtype, new_shape, new_strides};
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t new_numel = 1;
+    for (auto s : shape) new_numel *= s;
+    
+    if (new_numel != this->numel()) {
+        throw std::runtime_error("Tensor::view: Output size must match input size.");
+    }
+
+    // 简单实现：如果原张量连续，则按照新形状生成标准的连续步长
+    // 如果不连续，复杂的 view 操作很难不拷贝数据完成，这里主要处理连续情况
+    if (!isContiguous()) {
+        throw std::runtime_error("Tensor::view: Non-contiguous input is not fully supported for this assignment.");
+    }
+
+    std::vector<ptrdiff_t> new_strides(shape.size());
+    size_t stride = 1;
+    for (int i = shape.size() - 1; i >= 0; --i) {
+        new_strides[i] = stride;
+        stride *= shape[i];
+    }
+
+    // 创建新元数据
+    TensorMeta new_meta{_meta.dtype, shape, new_strides};
+    // 返回共享存储的新张量
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    if (dim >= _meta.shape.size() || start >= end || end > _meta.shape[dim]) {
+        throw std::invalid_argument("Tensor::slice: Invalid index.");
+    }
+
+    std::vector<size_t> new_shape = _meta.shape;
+    new_shape[dim] = end - start;
+
+    // 计算新的字节偏移量
+    size_t offset_bytes = start * _meta.strides[dim] * elementSize();
+
+    TensorMeta new_meta{_meta.dtype, new_shape, _meta.strides};
+    // 在原有 offset 基础上增加
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset + offset_bytes));
 }
 
-void Tensor::load(const void *src_) {
-    TO_BE_IMPLEMENTED();
+void Tensor::load(const void *src) {
+    if (!isContiguous()) {
+        throw std::runtime_error("Tensor::load: only supports contiguous tensors.");
+    }
+
+    size_t size_in_bytes = numel() * elementSize();
+
+    if (this->deviceType() == LLAISYS_DEVICE_CPU) {
+        std::memcpy(this->data(), src, size_in_bytes);
+    } else {
+        // 切换到张量所在的设备上下文
+        core::context().setDevice(this->deviceType(), this->deviceId());
+        // 调用运行时 API 进行 H2D 拷贝
+        core::context().runtime().api()->memcpy_sync(
+            this->data(), 
+            src, 
+            size_in_bytes, 
+            LLAISYS_MEMCPY_H2D
+        );
+    }
 }
 
 tensor_t Tensor::contiguous() const {

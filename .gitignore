@@ -88,3 +88,8 @@ htmlcov/
 Thumbs.db
 ehthumbs.db
 desktop.ini
+
+*.safetensors
+*.bin
+*.model
+models/
