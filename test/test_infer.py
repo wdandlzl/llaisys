@@ -15,6 +15,10 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 
 def load_hf_model(model_path=None, device_name="cpu"):
+    #1.找到本地模型
+    #2.加载分词器
+    #3.加载模型架构与权重 (Model)
+    #4.返回对象
     model_id = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 
     if model_path and os.path.isdir(model_path):
@@ -55,6 +59,7 @@ def hf_infer(
 
 
 def load_llaisys_model(model_path, device_name):
+    #调用了Qwen2.py中的_init_函数
     model = llaisys.models.Qwen2(model_path, llaisys_device(device_name))
     return model
 
@@ -80,6 +85,7 @@ def llaisys_infer(
 
 
 if __name__ == "__main__":
+    #命令行
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia"], type=str)
     parser.add_argument("--model", default=None, type=str)
@@ -92,16 +98,19 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    #测试模式（生成正确答案）
+    
     top_p, top_k, temperature = args.top_p, args.top_k, args.temperature
     if args.test:
         top_p, top_k, temperature = 1.0, 1, 1.0
-
+    #加载模型；tokenizer是文本预处理器，model是DeepSeek-R1-Distill-Qwen-1.5B模型实例
+    #model_path是模型权重的路径？
     tokenizer, model, model_path = load_hf_model(args.model, args.device)
 
-    # Example prompt
     start_time = time.time()
+   #生成正确答案
     tokens, output = hf_infer(
-        args.prompt,
+        args.prompt,    #用户输入的提示词，以下是各种参数
         tokenizer,
         model,
         max_new_tokens=args.max_steps,
@@ -121,7 +130,7 @@ if __name__ == "__main__":
     print(output)
     print("\n")
     print(f"Time elapsed: {(end_time - start_time):.2f}s\n")
-
+    #启动qwen2
     model = load_llaisys_model(model_path, args.device)
     start_time = time.time()
     llaisys_tokens, llaisys_output = llaisys_infer(
