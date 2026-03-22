@@ -1,0 +1,286 @@
+#include "tensor.hpp"
+
+#include "../utils.hpp"
+
+#include <cstring>
+#include <numeric>
+#include <sstream>
+
+namespace llaisys {
+
+Tensor::Tensor(TensorMeta meta, core::storage_t storage, size_t offset)
+    : _meta(std::move(meta)), _storage(std::move(storage)), _offset(offset) {}
+
+tensor_t Tensor::create(const std::vector<size_t> &shape,
+                        llaisysDataType_t dtype,
+                        llaisysDeviceType_t device_type,
+                        int device) {
+    size_t ndim_ = shape.size();
+    std::vector<ptrdiff_t> strides(ndim_);
+    size_t stride = 1;
+    for (size_t i = 1; i <= ndim_; i++) {
+        strides[ndim_ - i] = stride;
+        stride *= shape[ndim_ - i];
+    }
+    TensorMeta meta{dtype, shape, strides};
+    size_t total_elems = stride;
+    size_t dtype_size = utils::dsize(dtype);
+
+    if (device_type == LLAISYS_DEVICE_CPU && core::context().runtime().deviceType() != LLAISYS_DEVICE_CPU) {
+        auto storage = core::context().runtime().allocateHostStorage(total_elems * dtype_size);
+        return std::shared_ptr<Tensor>(new Tensor(meta, storage));
+    } else {
+        core::context().setDevice(device_type, device);
+        auto storage = core::context().runtime().allocateDeviceStorage(total_elems * dtype_size);
+        return std::shared_ptr<Tensor>(new Tensor(meta, storage));
+    }
+}
+
+std::byte *Tensor::data() {
+    return _storage->memory() + _offset;
+}
+
+const std::byte *Tensor::data() const {
+    return _storage->memory() + _offset;
+}
+
+size_t Tensor::ndim() const {
+    return _meta.shape.size();
+}
+
+const std::vector<size_t> &Tensor::shape() const {
+    return _meta.shape;
+}
+
+const std::vector<ptrdiff_t> &Tensor::strides() const {
+    return _meta.strides;
+}
+
+llaisysDataType_t Tensor::dtype() const {
+    return _meta.dtype;
+}
+
+llaisysDeviceType_t Tensor::deviceType() const {
+    return _storage->deviceType();
+}
+
+int Tensor::deviceId() const {
+    return _storage->deviceId();
+}
+
+size_t Tensor::numel() const {
+    return std::accumulate(_meta.shape.begin(), _meta.shape.end(), size_t(1), std::multiplies<size_t>());
+}
+
+size_t Tensor::elementSize() const {
+    return utils::dsize(_meta.dtype);
+}
+
+std::string Tensor::info() const {
+    std::stringstream ss;
+
+    ss << "Tensor: "
+       << "shape[ ";
+    for (auto s : this->shape()) {
+        ss << s << " ";
+    }
+    ss << "] strides[ ";
+    for (auto s : this->strides()) {
+        ss << s << " ";
+    }
+    ss << "] dtype=" << this->dtype();
+
+    return ss.str();
+}
+
+template <typename T>
+void print_data(const T *data, const std::vector<size_t> &shape, const std::vector<ptrdiff_t> &strides, size_t dim) {
+    if (dim == shape.size() - 1) {
+        for (size_t i = 0; i < shape[dim]; i++) {
+            if constexpr (std::is_same_v<T, bf16_t> || std::is_same_v<T, fp16_t>) {
+                std::cout << utils::cast<float>(data[i * strides[dim]]) << " ";
+            } else {
+                std::cout << data[i * strides[dim]] << " ";
+            }
+        }
+        std::cout << std::endl;
+    } else if (dim < shape.size() - 1) {
+        for (size_t i = 0; i < shape[dim]; i++) {
+            print_data(data + i * strides[dim], shape, strides, dim + 1);
+        }
+    }
+}
+
+void debug_print(const std::byte *data, const std::vector<size_t> &shape, const std::vector<ptrdiff_t> &strides, llaisysDataType_t dtype) {
+    switch (dtype) {
+    case LLAISYS_DTYPE_BYTE:
+        return print_data(reinterpret_cast<const char *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_BOOL:
+        return print_data(reinterpret_cast<const bool *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_I8:
+        return print_data(reinterpret_cast<const int8_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_I16:
+        return print_data(reinterpret_cast<const int16_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_I32:
+        return print_data(reinterpret_cast<const int32_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_I64:
+        return print_data(reinterpret_cast<const int64_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_U8:
+        return print_data(reinterpret_cast<const uint8_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_U16:
+        return print_data(reinterpret_cast<const uint16_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_U32:
+        return print_data(reinterpret_cast<const uint32_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_U64:
+        return print_data(reinterpret_cast<const uint64_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_F16:
+        return print_data(reinterpret_cast<const fp16_t *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_F32:
+        return print_data(reinterpret_cast<const float *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_F64:
+        return print_data(reinterpret_cast<const double *>(data), shape, strides, 0);
+    case LLAISYS_DTYPE_BF16:
+        return print_data(reinterpret_cast<const bf16_t *>(data), shape, strides, 0);
+    default:
+        EXCEPTION_UNSUPPORTED_DATATYPE(dtype);
+    }
+}
+
+void Tensor::debug() const {
+    core::context().setDevice(this->deviceType(), this->deviceId());
+    core::context().runtime().api()->device_synchronize();
+    std::cout << this->info() << std::endl;
+    if (this->deviceType() == LLAISYS_DEVICE_CPU) {
+        debug_print(this->data(), this->shape(), this->strides(), this->dtype());
+    } else {
+        auto tmp_tensor = create({this->_storage->size()}, this->dtype());
+        core::context().runtime().api()->memcpy_sync(
+            tmp_tensor->data(),
+            this->data(),
+            this->numel() * this->elementSize(),
+            LLAISYS_MEMCPY_D2H);
+        debug_print(tmp_tensor->data(), this->shape(), this->strides(), this->dtype());
+    }
+}
+
+// src/tensor/tensor.cpp
+
+bool Tensor::isContiguous() const {
+    size_t expected_stride = 1;
+    // 修改点：将 int 改为 int64_t，并加上 static_cast<int64_t>
+    for (int64_t i = static_cast<int64_t>(_meta.shape.size()) - 1; i >= 0; --i) {
+        if (_meta.shape[i] == 1) {
+            continue;
+        }
+        if (_meta.strides[i] != static_cast<ptrdiff_t>(expected_stride)) {
+            return false;
+        }
+        expected_stride *= _meta.shape[i];
+    }
+    return true;
+}
+
+tensor_t Tensor::permute(const std::vector<size_t> &order) const {
+    if (order.size() != _meta.shape.size()) {
+        throw std::runtime_error("Tensor::permute: Dimension mismatch.");
+    }
+
+    std::vector<size_t> new_shape;
+    std::vector<ptrdiff_t> new_strides;
+    new_shape.reserve(order.size());
+    new_strides.reserve(order.size());
+
+    for (size_t idx : order) {
+        new_shape.push_back(_meta.shape[idx]);
+        new_strides.push_back(_meta.strides[idx]);
+    }
+
+    TensorMeta new_meta{_meta.dtype, new_shape, new_strides};
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
+}
+
+tensor_t Tensor::view(const std::vector<size_t> &shape) const {
+    // 1. 检查元素总数是否一致
+    size_t new_numel = 1;
+    for (auto s : shape) new_numel *= s;
+    
+    if (new_numel != this->numel()) {
+        throw std::runtime_error("Tensor::view: Output size must match input size.");
+    }
+
+    // 2. 检查连续性 (作业简化处理：非连续张量不允许直接 view)
+    if (!isContiguous()) {
+        // 如果你需要支持非连续张量的 view，逻辑会非常复杂。
+        // 对于本次作业，建议直接报错提示用户先调用 contiguous()。
+        throw std::runtime_error("Tensor::view: Input tensor must be contiguous to use view(). Please call contiguous() first.");
+    }
+
+    // 3. 计算新的连续步长
+    std::vector<ptrdiff_t> new_strides(shape.size());
+    size_t stride = 1;
+
+    // --- 关键修复：使用 int64_t 替代 int，并强制转换 shape.size() ---
+    // 这行代码解决了 Windows 下的 C4267 错误
+    for (int64_t i = static_cast<int64_t>(shape.size()) - 1; i >= 0; --i) {
+        new_strides[i] = stride;
+        stride *= shape[i];
+    }
+
+    // 4. 返回共享存储的新张量
+    return std::shared_ptr<Tensor>(new Tensor(TensorMeta{_meta.dtype, shape, new_strides}, _storage, _offset));
+}
+
+tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
+    if (dim >= _meta.shape.size() || start >= end || end > _meta.shape[dim]) {
+        throw std::invalid_argument("Tensor::slice: Invalid index.");
+    }
+
+    std::vector<size_t> new_shape = _meta.shape;
+    new_shape[dim] = end - start;
+
+    // 计算新的字节偏移量
+    size_t offset_bytes = start * _meta.strides[dim] * elementSize();
+
+    TensorMeta new_meta{_meta.dtype, new_shape, _meta.strides};
+    // 在原有 offset 基础上增加
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset + offset_bytes));
+}
+
+void Tensor::load(const void *src) {
+    if (!isContiguous()) {
+        throw std::runtime_error("Tensor::load: only supports contiguous tensors.");
+    }
+
+    size_t size_in_bytes = numel() * elementSize();
+
+    if (this->deviceType() == LLAISYS_DEVICE_CPU) {
+        std::memcpy(this->data(), src, size_in_bytes);
+    } else {
+        // 切换到张量所在的设备上下文
+        core::context().setDevice(this->deviceType(), this->deviceId());
+        // 调用运行时 API 进行 H2D 拷贝
+        core::context().runtime().api()->memcpy_sync(
+            this->data(), 
+            src, 
+            size_in_bytes, 
+            LLAISYS_MEMCPY_H2D
+        );
+    }
+}
+
+tensor_t Tensor::contiguous() const {
+    TO_BE_IMPLEMENTED();
+    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+}
+
+tensor_t Tensor::reshape(const std::vector<size_t> &shape) const {
+    TO_BE_IMPLEMENTED();
+    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+}
+
+tensor_t Tensor::to(llaisysDeviceType_t device_type, int device) const {
+    TO_BE_IMPLEMENTED();
+    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+}
+
+} // namespace llaisys
